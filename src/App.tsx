@@ -1,27 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import Papa from "papaparse";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STORAGE  (swap the two lines below to enable localStorage in your own env)
-// ─────────────────────────────────────────────────────────────────────────────
-const store = {
-  get: (k)      => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
-  set: (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-  del: (k)      => { try { localStorage.removeItem(k); } catch {} },
-};
-// In-memory fallback (used automatically if localStorage throws):
-const _mem = {};
-const memStore = {
-  get: (k)    => _mem[k] ?? null,
-  set: (k, v) => { _mem[k] = v; },
-  del: (k)    => { delete _mem[k]; },
-};
-function safeStore() {
-  try { localStorage.setItem("__test__","1"); localStorage.removeItem("__test__"); return store; }
-  catch { return memStore; }
-}
-const db = safeStore();
-const SESSIONS_KEY = "aievals_sessions";
+import { supabase } from "./supabaseClient";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -296,11 +275,8 @@ function parseCSV(text) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SESSION HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-function loadSessions() { return db.get(SESSIONS_KEY) || []; }
-function saveSessions(sessions) { db.set(SESSIONS_KEY, sessions); }
 function createSession(traces, filename) {
   return {
-    id: `session_${Date.now()}`,
     name: `Análisis — ${new Date().toLocaleString("es-ES",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}`,
     filename: filename || "unknown.csv",
     createdAt: new Date().toISOString(),
@@ -308,6 +284,19 @@ function createSession(traces, filename) {
     annotations: {},
     failureModes: BUILTIN_FM,
     judgeResults: null,
+  };
+}
+
+function mapRowToSession(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    filename: row.filename,
+    createdAt: row.created_at,
+    traces: row.traces || [],
+    annotations: row.annotations || {},
+    failureModes: row.failure_modes || BUILTIN_FM,
+    judgeResults: row.judge_results ?? null,
   };
 }
 
@@ -1075,61 +1064,378 @@ function Dashboard({ session }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AUTH VIEW  (Supabase Auth)
+// ─────────────────────────────────────────────────────────────────────────────
+function AuthView() {
+  const [mode, setMode]   = useState("login"); // "login" | "register"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      if (!email || !password) {
+        throw new Error("Introduce email y contraseña.");
+      }
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+      }
+    } catch (err) {
+      setError(err?.message || "Error de autenticación");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="h-screen flex items-center justify-center bg-gray-950 text-gray-100">
+      <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-8 shadow-xl">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-lg font-black">
+            E
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">AI Evals Manager</h1>
+            <p className="text-xs text-gray-500">Accede con tu cuenta de Supabase Auth</p>
+          </div>
+        </div>
+
+        <div className="flex mb-4 text-xs bg-gray-800 rounded-lg p-0.5">
+          <button
+            className={`flex-1 py-1.5 rounded-md font-semibold transition-colors ${
+              mode === "login"
+                ? "bg-indigo-600 text-white"
+                : "text-gray-400 hover:text-gray-100"
+            }`}
+            onClick={() => setMode("login")}
+          >
+            Iniciar sesión
+          </button>
+          <button
+            className={`flex-1 py-1.5 rounded-md font-semibold transition-colors ${
+              mode === "register"
+                ? "bg-indigo-600 text-white"
+                : "text-gray-400 hover:text-gray-100"
+            }`}
+            onClick={() => setMode("register")}
+          >
+            Crear cuenta
+          </button>
+        </div>
+
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">
+              Email
+            </label>
+            <input
+              type="email"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="tucorreo@empresa.com"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">
+              Contraseña
+            </label>
+            <input
+              type="password"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-red-400 bg-red-950/40 border border-red-700 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+          >
+            {loading ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                {mode === "login" ? "Entrando..." : "Creando cuenta..."}
+              </>
+            ) : mode === "login" ? (
+              "Entrar"
+            ) : (
+              "Registrarme"
+            )}
+          </button>
+
+          <p className="text-[11px] text-gray-600 mt-2">
+            {mode === "login"
+              ? "Si aún no tienes cuenta, cambia a 'Crear cuenta'."
+              : "La gestión de emails de confirmación se configura desde el panel de Supabase."}
+          </p>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [sessions,   setSessions]   = useState(()=>loadSessions());
+  const [user, setUser] = useState(null);
+  const [authLoading,   setAuthLoading] = useState(true);
+
+  const [sessions, setSessions] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
-  const [view,       setView]       = useState("home");
-  const [toast,      setToast]      = useState("");
+  const [view, setView] = useState("home");
+  const [toast, setToast] = useState("");
+  const [role, setRole]   = useState("sme");
 
-  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(""),3500); };
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3500);
+  };
 
-  // Persist sessions whenever they change
-  useEffect(() => { saveSessions(sessions); }, [sessions]);
+  // Escucha de sesión de Supabase Auth
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) {
+          console.error(error);
+        } else if (data?.user) {
+          setUser(data.user);
+        }
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+    init();
 
-  const persistSession = (updated) => {
-    setSessions(prev => prev.map(s => s.id===updated.id ? updated : s));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Cargar sesiones del usuario desde Supabase
+  useEffect(() => {
+    if (!user) {
+      setSessions([]);
+      setActiveSession(null);
+      return;
+    }
+    const load = async () => {
+      const { data, error } = await supabase
+        .from("sessions")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.error(error);
+        showToast("Error cargando sesiones desde Supabase");
+        setSessions([]);
+        return;
+      }
+      const mapped = (data || []).map(mapRowToSession);
+      setSessions(mapped);
+    };
+    load();
+  }, [user]);
+
+  const persistSession = async (updated) => {
+    setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     setActiveSession(updated);
+    const { error } = await supabase
+      .from("sessions")
+      .update({
+        name: updated.name,
+        filename: updated.filename,
+        created_at: updated.createdAt,
+        traces: updated.traces,
+        annotations: updated.annotations,
+        failure_modes: updated.failureModes,
+        judge_results: updated.judgeResults,
+      })
+      .eq("id", updated.id);
+    if (error) {
+      console.error(error);
+      showToast("Error guardando sesión en Supabase");
+    }
   };
 
   const updateSession = (patch) => {
+    if (!activeSession) return;
     const updated = { ...activeSession, ...patch };
-    persistSession(updated);
+    void persistSession(updated);
   };
 
-  const onLoad = (traces, skipped, filename, mode) => {
-    const s = createSession(traces, filename);
-    if (mode==="withAnnotations") s.annotations = DEMO_ANNOTATIONS;
-    setSessions(prev=>[s,...prev]);
+  const onLoad = async (traces, skipped, filename, mode) => {
+    if (!user) return;
+    const base = createSession(traces, filename);
+    if (mode === "withAnnotations") base.annotations = DEMO_ANNOTATIONS;
+    try {
+      const { data, error } = await supabase
+        .from("sessions")
+        .insert({
+          user_id: user.id,
+          name: base.name,
+          filename: base.filename,
+          created_at: base.createdAt,
+          traces: base.traces,
+          annotations: base.annotations,
+          failure_modes: base.failureModes,
+          judge_results: base.judgeResults,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      const newSession = mapRowToSession(data);
+      setSessions((prev) => [newSession, ...prev]);
+      setActiveSession(newSession);
+      setView("review");
+      if (skipped > 0) {
+        showToast(`⚠️ ${skipped} fila${skipped > 1 ? "s" : ""} omitidas`);
+      } else {
+        showToast("✅ Sesión creada");
+      }
+    } catch (e) {
+      console.error(e);
+      showToast("Error creando sesión en Supabase");
+    }
+  };
+
+  const onContinue = (s) => {
     setActiveSession(s);
     setView("review");
-    if(skipped>0) showToast(`⚠️ ${skipped} fila${skipped>1?"s":""} omitidas`);
-    else showToast("✅ Sesión creada");
   };
 
-  const onContinue = s => { setActiveSession(s); setView("review"); };
-  const onDelete   = id => { setSessions(prev=>prev.filter(s=>s.id!==id)); if(activeSession?.id===id){ setActiveSession(null); setView("home"); } };
-  const onRename   = (id, name) => { setSessions(prev=>prev.map(s=>s.id===id?{...s,name}:s)); if(activeSession?.id===id) setActiveSession(a=>({...a,name})); };
-  const onNew      = () => setView("ingest");
+  const onDelete = async (id) => {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    if (activeSession?.id === id) {
+      setActiveSession(null);
+      setView("home");
+    }
+    const { error } = await supabase.from("sessions").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      showToast("Error eliminando sesión en Supabase");
+    }
+  };
+
+  const onRename = async (id, name) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, name } : s))
+    );
+    if (activeSession?.id === id) {
+      setActiveSession((a) => (a ? { ...a, name } : a));
+    }
+    const { error } = await supabase
+      .from("sessions")
+      .update({ name })
+      .eq("id", id);
+    if (error) {
+      console.error(error);
+      showToast("Error renombrando sesión en Supabase");
+    }
+  };
+
+  const onNew = () => setView("ingest");
 
   const noSession = !activeSession || !activeSession.traces?.length;
 
+  if (authLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-950 text-gray-400 text-sm">
+        Cargando sesión...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthView />;
+  }
+
   return (
     <div className="h-screen flex bg-gray-950 font-sans overflow-hidden">
-      <Sidebar view={view} setView={setView} session={activeSession}/>
+      <Sidebar
+        view={view}
+        setView={setView}
+        session={activeSession}
+        role={role}
+        setRole={setRole}
+      />
       <div className="flex-1 overflow-hidden">
-        {view==="home"     && <SessionsHome sessions={sessions} onContinue={onContinue} onDelete={onDelete} onNew={onNew} onRename={onRename}/>}
-        {view==="ingest"   && <IngestView onLoad={onLoad}/>}
-        {view==="review"   && (noSession
-          ? <div className="h-full flex flex-col items-center justify-center text-gray-600 gap-3"><span className="text-4xl">📥</span><p>Carga o selecciona una sesión primero</p><button onClick={()=>setView("home")} className="text-indigo-400 text-sm border border-indigo-700 rounded-lg px-4 py-2 hover:bg-indigo-900/30">→ Ver sesiones</button></div>
-          : <TraceReview session={activeSession} updateSession={updateSession}/>)}
-        {view==="taxonomy" && (noSession ? null : <TaxonomyBuilder session={activeSession} updateSession={updateSession}/>)}
-        {view==="judge"    && (noSession ? null : <JudgeStudio session={activeSession} updateSession={updateSession}/>)}
-        {view==="golden"   && (noSession ? null : <GoldenDataset session={activeSession}/>)}
-        {view==="dashboard"&& (noSession ? null : <Dashboard session={activeSession}/>)}
+        {view === "home" && (
+          <SessionsHome
+            sessions={sessions}
+            onContinue={onContinue}
+            onDelete={onDelete}
+            onNew={onNew}
+            onRename={onRename}
+          />
+        )}
+        {view === "ingest" && <IngestView onLoad={onLoad} />}
+        {view === "review" &&
+          (noSession ? (
+            <div className="h-full flex flex-col items-center justify-center text-gray-600 gap-3">
+              <span className="text-4xl">📥</span>
+              <p>Carga o selecciona una sesión primero</p>
+              <button
+                onClick={() => setView("home")}
+                className="text-indigo-400 text-sm border border-indigo-700 rounded-lg px-4 py-2 hover:bg-indigo-900/30"
+              >
+                → Ver sesiones
+              </button>
+            </div>
+          ) : (
+            <TraceReview
+              session={activeSession}
+              updateSession={updateSession}
+              role={role}
+            />
+          ))}
+        {view === "taxonomy" &&
+          (noSession ? null : (
+            <TaxonomyBuilder
+              session={activeSession}
+              updateSession={updateSession}
+            />
+          ))}
+        {view === "judge" &&
+          (noSession ? null : (
+            <JudgeStudio
+              session={activeSession}
+              updateSession={updateSession}
+              role={role}
+            />
+          ))}
+        {view === "golden" &&
+          (noSession ? null : <GoldenDataset session={activeSession} />)}
+        {view === "dashboard" &&
+          (noSession ? null : <Dashboard session={activeSession} />)}
       </div>
-      {toast&&<div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-5 py-2.5 rounded-lg text-sm shadow-xl z-50 border border-gray-700">{toast}</div>}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-5 py-2.5 rounded-lg text-sm shadow-xl z-50 border border-gray-700">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
