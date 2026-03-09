@@ -3,7 +3,7 @@ import { Play, Settings2, AlertCircle } from "lucide-react";
 import type { QueryItem } from "./SyntheticDataGenerator";
 
 export interface ModelConfig {
-    provider: "openai" | "anthropic";
+    provider: "openai" | "anthropic" | "gemini";
     model: string;
     systemPrompt: string;
     temperature: number;
@@ -77,7 +77,7 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                 "Content-Type": "application/json",
                 "x-api-key": key,
                 "anthropic-version": "2023-06-01",
-                "anthropic-dangerously-allow-browser": "true" // Needed for client side fetch
+                "anthropic-dangerously-allow-browser": "true"
             },
             body: JSON.stringify({
                 model: config.model,
@@ -95,46 +95,60 @@ export function Playground({ queries, onResultsGenerated }: Props) {
         return data.content[0].text;
     };
 
+    const runGemini = async (queryText: string, config: ModelConfig, key: string) => {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${key}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [
+                    { role: "user", parts: [{ text: `System context: ${config.systemPrompt}\n\nUser query: ${queryText}` }] }
+                ],
+                generationConfig: {
+                    temperature: config.temperature,
+                    maxOutputTokens: config.maxTokens,
+                }
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error?.message || "Gemini API Error");
+        }
+        const data = await res.json();
+        return data.candidates[0].content.parts[0].text;
+    };
+
     const handleRun = async () => {
         if (queries.length === 0) return;
         const openAiKey = localStorage.getItem("OPENAI_API_KEY");
         const anthropicKey = localStorage.getItem("ANTHROPIC_API_KEY");
+        const geminiKey = localStorage.getItem("GEMINI_API_KEY");
 
         setIsRunning(true);
-        setProgress({ current: 0, total: queries.length });
-        const results: EvaluationResult[] = [];
+        const activeQueries = queries.filter(q => (q as any).selected !== false);
+        setProgress({ current: 0, total: activeQueries.length });
+        const finalResults: EvaluationResult[] = [];
 
-        for (let i = 0; i < queries.length; i++) {
-            const q = queries[i];
+        const executeModel = async (config: ModelConfig, text: string) => {
+            if (config.provider === "openai") {
+                if (!openAiKey) throw new Error("Falta clave API de OpenAI");
+                return runOpenAI(text, config, openAiKey);
+            } else if (config.provider === "anthropic") {
+                if (!anthropicKey) throw new Error("Falta clave API de Anthropic");
+                return runAnthropic(text, config, anthropicKey);
+            } else {
+                if (!geminiKey) throw new Error("Falta clave API de Google Gemini");
+                return runGemini(text, config, geminiKey);
+            }
+        };
+
+        for (let i = 0; i < activeQueries.length; i++) {
+            const q = activeQueries[i];
             let outA = null, errA = null, outB = null, errB = null;
 
-            // Run A
-            try {
-                if (configA.provider === "openai") {
-                    if (!openAiKey) throw new Error("Missing OpenAI API Key");
-                    outA = await runOpenAI(q.text, configA, openAiKey);
-                } else {
-                    if (!anthropicKey) throw new Error("Missing Anthropic API Key");
-                    outA = await runAnthropic(q.text, configA, anthropicKey);
-                }
-            } catch (e: any) {
-                errA = e.message;
-            }
+            try { outA = await executeModel(configA, q.text); } catch (e: any) { errA = e.message; }
+            try { outB = await executeModel(configB, q.text); } catch (e: any) { errB = e.message; }
 
-            // Run B
-            try {
-                if (configB.provider === "openai") {
-                    if (!openAiKey) throw new Error("Missing OpenAI API Key");
-                    outB = await runOpenAI(q.text, configB, openAiKey);
-                } else {
-                    if (!anthropicKey) throw new Error("Missing Anthropic API Key");
-                    outB = await runAnthropic(q.text, configB, anthropicKey);
-                }
-            } catch (e: any) {
-                errB = e.message;
-            }
-
-            results.push({
+            finalResults.push({
                 id: Math.random().toString(36).substring(7),
                 query: q,
                 configA: { ...configA },
@@ -144,10 +158,10 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                 outputB: outB,
                 errorB: errB
             });
-            setProgress({ current: i + 1, total: queries.length });
+            setProgress({ current: i + 1, total: activeQueries.length });
         }
 
-        onResultsGenerated(results);
+        onResultsGenerated(finalResults);
         setIsRunning(false);
     };
 
@@ -164,10 +178,17 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                     <select
                         className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
                         value={config.provider}
-                        onChange={e => setConfig({ ...config, provider: e.target.value as any, model: e.target.value === "openai" ? "gpt-4o" : "claude-3-5-sonnet-latest" })}
+                        onChange={e => {
+                            const p = e.target.value as any;
+                            let defModel = "gpt-4o";
+                            if (p === "anthropic") defModel = "claude-3-5-sonnet-latest";
+                            if (p === "gemini") defModel = "gemini-1.5-pro";
+                            setConfig({ ...config, provider: p, model: defModel });
+                        }}
                     >
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
+                        <option value="gemini">Google Gemini</option>
                     </select>
                 </div>
                 <div>
@@ -182,10 +203,15 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                                 <option value="gpt-4o">gpt-4o</option>
                                 <option value="gpt-4o-mini">gpt-4o-mini</option>
                             </>
-                        ) : (
+                        ) : config.provider === "anthropic" ? (
                             <>
                                 <option value="claude-3-5-sonnet-latest">claude-3-5-sonnet-latest</option>
                                 <option value="claude-3-haiku-20240307">claude-3-haiku</option>
+                            </>
+                        ) : (
+                            <>
+                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
                             </>
                         )}
                     </select>
@@ -227,14 +253,14 @@ export function Playground({ queries, onResultsGenerated }: Props) {
     return (
         <div className="flex flex-col space-y-4">
             <div className="flex flex-col lg:flex-row gap-6">
-                {renderConfig("Configuración A", configA, setConfigA)}
-                {renderConfig("Configuración B", configB, setConfigB)}
+                {renderConfig("Carril A", configA, setConfigA)}
+                {renderConfig("Carril B", configB, setConfigB)}
             </div>
 
             <div className="flex items-center justify-between bg-gray-800/30 border border-gray-800 rounded-xl p-4">
                 <div className="flex items-center gap-3">
                     <p className="text-sm text-gray-300">
-                        Consultas pendientes: <strong className="text-white">{queries.length}</strong>
+                        Consultas a ejecutar: <strong className="text-white">{queries.filter(q => (q as any).selected !== false).length}</strong>
                     </p>
                     {isRunning && (
                         <span className="text-xs text-indigo-400 font-mono bg-indigo-900/30 px-2 py-1 rounded">
@@ -244,11 +270,11 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                 </div>
                 <button
                     onClick={handleRun}
-                    disabled={queries.length === 0 || isRunning}
+                    disabled={queries.filter(q => (q as any).selected !== false).length === 0 || isRunning}
                     className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg"
                 >
                     {isRunning ? <span className="animate-spin">⟳</span> : <Play className="w-4 h-4" />}
-                    Run Synthetic Queries
+                    Ejecutar Consultas Seleccionadas
                 </button>
             </div>
 

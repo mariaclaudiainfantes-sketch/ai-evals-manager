@@ -15,12 +15,11 @@ export function ExperimentationView() {
     const checkKeys = () => {
         const openAi = localStorage.getItem("OPENAI_API_KEY");
         const anthropic = localStorage.getItem("ANTHROPIC_API_KEY");
-        const valid = !!(openAi && anthropic);
+        const gemini = localStorage.getItem("GEMINI_API_KEY");
+        // We consider it "hasKeys" if at least one is present, 
+        // but the specific validation happens at the model execution level.
+        const valid = !!(openAi || anthropic || gemini);
         setHasKeys(valid);
-        if (!valid && !isSettingsOpen) {
-            // Small delay to ensure render
-            setTimeout(() => setIsSettingsOpen(true), 100);
-        }
     };
 
     useEffect(() => {

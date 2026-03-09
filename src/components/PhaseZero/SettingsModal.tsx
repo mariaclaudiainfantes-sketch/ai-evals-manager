@@ -9,11 +9,13 @@ interface SettingsModalProps {
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [openAiKey, setOpenAiKey] = useState("");
     const [anthropicKey, setAnthropicKey] = useState("");
+    const [geminiKey, setGeminiKey] = useState("");
 
     useEffect(() => {
         if (isOpen) {
             setOpenAiKey(localStorage.getItem("OPENAI_API_KEY") || "");
             setAnthropicKey(localStorage.getItem("ANTHROPIC_API_KEY") || "");
+            setGeminiKey(localStorage.getItem("GEMINI_API_KEY") || "");
         }
     }, [isOpen]);
 
@@ -23,6 +25,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         if (anthropicKey) localStorage.setItem("ANTHROPIC_API_KEY", anthropicKey.trim());
         else localStorage.removeItem("ANTHROPIC_API_KEY");
+
+        if (geminiKey) localStorage.setItem("GEMINI_API_KEY", geminiKey.trim());
+        else localStorage.removeItem("GEMINI_API_KEY");
 
         onClose();
     };
@@ -72,6 +77,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                                 value={anthropicKey}
                                 onChange={(e) => setAnthropicKey(e.target.value)}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wide">
+                                Google Gemini API Key
+                            </label>
+                            <input
+                                type="password"
+                                placeholder="AIza..."
+                                className="w-full bg-gray-950 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                                value={geminiKey}
+                                onChange={(e) => setGeminiKey(e.target.value)}
                             />
                         </div>
                     </div>
