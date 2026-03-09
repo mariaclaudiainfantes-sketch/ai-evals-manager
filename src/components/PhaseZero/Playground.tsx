@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Play, Settings2, AlertCircle } from "lucide-react";
+import { Play, Settings2, AlertCircle, Save } from "lucide-react";
 import type { QueryItem } from "./SyntheticDataGenerator";
+import { supabase } from "../../supabaseClient";
 
 export interface ModelConfig {
     provider: "openai" | "anthropic" | "gemini";
@@ -24,29 +25,17 @@ export interface EvaluationResult {
 interface Props {
     queries: QueryItem[];
     onResultsGenerated: (results: EvaluationResult[]) => void;
+    configA: ModelConfig;
+    setConfigA: (c: ModelConfig) => void;
+    configB: ModelConfig;
+    setConfigB: (c: ModelConfig) => void;
+    results: EvaluationResult[]; // Para poder guardar el experimento actual
 }
 
-const DEFAULT_PROMPT = "You are a helpful assistant. Reply exactly to what the user asks.";
-
-export function Playground({ queries, onResultsGenerated }: Props) {
-    const [configA, setConfigA] = useState<ModelConfig>({
-        provider: "openai",
-        model: "gpt-4o-mini",
-        systemPrompt: DEFAULT_PROMPT,
-        temperature: 0.7,
-        maxTokens: 500
-    });
-
-    const [configB, setConfigB] = useState<ModelConfig>({
-        provider: "anthropic",
-        model: "claude-3-5-sonnet-latest",
-        systemPrompt: DEFAULT_PROMPT,
-        temperature: 0.7,
-        maxTokens: 500
-    });
-
+export function Playground({ queries, onResultsGenerated, configA, setConfigA, configB, setConfigB, results }: Props) {
     const [isRunning, setIsRunning] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0 });
+    const [isSaving, setIsSaving] = useState(false);
 
     const runOpenAI = async (queryText: string, config: ModelConfig, key: string) => {
         const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -125,6 +114,11 @@ export function Playground({ queries, onResultsGenerated }: Props) {
 
         setIsRunning(true);
         const activeQueries = queries.filter(q => (q as any).selected !== false);
+        if (activeQueries.length === 0) {
+            setIsRunning(false);
+            return;
+        }
+
         setProgress({ current: 0, total: activeQueries.length });
         const finalResults: EvaluationResult[] = [];
 
@@ -163,6 +157,42 @@ export function Playground({ queries, onResultsGenerated }: Props) {
 
         onResultsGenerated(finalResults);
         setIsRunning(false);
+    };
+
+    const handleSaveExperiment = async () => {
+        if (results.length === 0) {
+            alert("No hay resultados para guardar. Ejecuta consultas primero.");
+            return;
+        }
+        setIsSaving(true);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error("Debes iniciar sesión para guardar experimentos.");
+
+            const payload = {
+                source: "phase_0_experiment",
+                input_query: `Exp: ${new Date().toLocaleString()}`,
+                model_config: {
+                    configA,
+                    configB,
+                    count: results.length
+                },
+                output_data: JSON.stringify(results),
+                judgment: "N/A",
+                created_at: new Date().toISOString()
+                // Nota: el campo user_id se añadirá automáticamente si la RLS lo permite 
+                // o podemos añadirlo si conocemos el schema.
+            };
+
+            const { error } = await supabase.from("traces").insert([payload]);
+            if (error) throw error;
+            alert("✅ Experimento guardado exitosamente");
+        } catch (e: any) {
+            console.error(e);
+            alert("Error al guardar: " + e.message);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const renderConfig = (title: string, config: ModelConfig, setConfig: (c: ModelConfig) => void) => (
@@ -268,14 +298,25 @@ export function Playground({ queries, onResultsGenerated }: Props) {
                         </span>
                     )}
                 </div>
-                <button
-                    onClick={handleRun}
-                    disabled={queries.filter(q => (q as any).selected !== false).length === 0 || isRunning}
-                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg"
-                >
-                    {isRunning ? <span className="animate-spin">⟳</span> : <Play className="w-4 h-4" />}
-                    Ejecutar Consultas Seleccionadas
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleSaveExperiment}
+                        disabled={results.length === 0 || isSaving}
+                        className="bg-gray-700 hover:bg-gray-600 border border-gray-600 disabled:opacity-50 text-white font-bold py-2.5 px-4 rounded-xl flex items-center gap-2 transition-all"
+                        title="Guardar en el Historial"
+                    >
+                        {isSaving ? <span className="animate-spin">⟳</span> : <Save className="w-4 h-4" />}
+                        Guardar Experimento
+                    </button>
+                    <button
+                        onClick={handleRun}
+                        disabled={queries.filter(q => (q as any).selected !== false).length === 0 || isRunning}
+                        className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg"
+                    >
+                        {isRunning ? <span className="animate-spin">⟳</span> : <Play className="w-4 h-4" />}
+                        Ejecutar Consultas Seleccionadas
+                    </button>
+                </div>
             </div>
 
             {queries.length === 0 && (

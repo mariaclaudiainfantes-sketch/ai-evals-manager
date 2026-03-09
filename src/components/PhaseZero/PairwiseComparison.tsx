@@ -126,6 +126,28 @@ export function PairwiseComparison({ results }: Props) {
         );
     };
 
+    const [isContextExpanded, setIsContextExpanded] = useState(true);
+
+    const renderCleanQuery = (text: string) => {
+        try {
+            const parsed = JSON.parse(text);
+            if (typeof parsed === "object" && parsed !== null) {
+                return (
+                    <div className="space-y-1">
+                        {Object.entries(parsed).map(([key, value]) => (
+                            <p key={key} className="text-gray-300">
+                                <strong className="text-indigo-300">{key}:</strong> {String(value)}
+                            </p>
+                        ))}
+                    </div>
+                );
+            }
+        } catch (e) {
+            // Fallback if not JSON
+        }
+        return <p className="text-lg text-gray-200 font-medium">{text}</p>;
+    };
+
     return (
         <div className="flex flex-col gap-4">
             {/* Top Nav */}
@@ -155,17 +177,35 @@ export function PairwiseComparison({ results }: Props) {
                 </label>
             </div>
 
-            {/* Query / Context */}
-            <div className="bg-indigo-950/20 border border-indigo-900/40 rounded-xl p-4">
-                <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-2 block">Contexto / User Query</span>
-                <p className="text-lg text-gray-200 font-medium">{query.text}</p>
-                <div className="flex gap-2 mt-3">
-                    {Object.entries(query.tuple).map(([k, v]) => (
-                        <span key={k} className="bg-gray-900/80 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded-md">
-                            <strong className="text-gray-500">{k}:</strong> {v}
-                        </span>
-                    ))}
-                </div>
+            {/* Query / Context - Collapsible Panel */}
+            <div className="bg-indigo-950/20 border border-indigo-900/40 rounded-xl overflow-hidden">
+                <button
+                    onClick={() => setIsContextExpanded(!isContextExpanded)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-indigo-900/10 hover:bg-indigo-900/20 transition-colors"
+                >
+                    <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Contexto / User Query</span>
+                    <span className="text-indigo-400 text-xs">{isContextExpanded ? "Ocultar" : "Mostrar"}</span>
+                </button>
+
+                {isContextExpanded && (
+                    <div className="p-4 border-t border-indigo-900/30">
+                        {rawView ? (
+                            <pre className="bg-gray-950 p-3 rounded-lg text-xs text-gray-300 font-mono overflow-x-auto border border-gray-800">
+                                <code>{query.text}</code>
+                            </pre>
+                        ) : (
+                            renderCleanQuery(query.text)
+                        )}
+
+                        <div className="flex flex-wrap gap-2 mt-4">
+                            {Object.entries(query.tuple).map(([k, v]) => (
+                                <span key={k} className="bg-gray-900/80 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded-md">
+                                    <strong className="text-gray-500">{k}:</strong> {v}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* A vs B */}
