@@ -29,7 +29,7 @@ interface Props {
     setConfigA: (c: ModelConfig) => void;
     configB: ModelConfig;
     setConfigB: (c: ModelConfig) => void;
-    results: EvaluationResult[]; // Para poder guardar el experimento actual
+    results: EvaluationResult[];
 }
 
 export function Playground({ queries, onResultsGenerated, configA, setConfigA, configB, setConfigB, results }: Props) {
@@ -37,6 +37,7 @@ export function Playground({ queries, onResultsGenerated, configA, setConfigA, c
     const [progress, setProgress] = useState({ current: 0, total: 0 });
     const [isSaving, setIsSaving] = useState(false);
 
+    // --- Funciones de ejecución (sin cambios, mantienen lógica actual) ---
     const runOpenAI = async (queryText: string, config: ModelConfig, key: string) => {
         const res = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST",
@@ -157,6 +158,25 @@ export function Playground({ queries, onResultsGenerated, configA, setConfigA, c
 
         onResultsGenerated(finalResults);
         setIsRunning(false);
+
+        // Auto-save experiment after finishing
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const payload = {
+                    source: "phase_0_experiment",
+                    input_user_context: queries,
+                    input_query: `Ejecución: ${finalResults.length} consultas - ${new Date().toLocaleTimeString()}`,
+                    model_config: { configA, configB, count: finalResults.length },
+                    output_data: JSON.stringify(finalResults),
+                    judgment: "N/A",
+                    created_at: new Date().toISOString()
+                };
+                await supabase.from("traces").insert([payload]);
+            }
+        } catch (e) {
+            console.warn("Auto-save failed, session might be invalid:", e);
+        }
     };
 
     const handleSaveExperiment = async () => {
@@ -171,6 +191,8 @@ export function Playground({ queries, onResultsGenerated, configA, setConfigA, c
 
             const payload = {
                 source: "phase_0_experiment",
+                // Guardamos explícitamente en las nuevas columnas
+                input_user_context: queries, // Aquí pasan las tuplas
                 input_query: `Exp: ${new Date().toLocaleString()}`,
                 model_config: {
                     configA,
@@ -180,8 +202,6 @@ export function Playground({ queries, onResultsGenerated, configA, setConfigA, c
                 output_data: JSON.stringify(results),
                 judgment: "N/A",
                 created_at: new Date().toISOString()
-                // Nota: el campo user_id se añadirá automáticamente si la RLS lo permite 
-                // o podemos añadirlo si conocemos el schema.
             };
 
             const { error } = await supabase.from("traces").insert([payload]);
@@ -195,90 +215,102 @@ export function Playground({ queries, onResultsGenerated, configA, setConfigA, c
         }
     };
 
-    const renderConfig = (title: string, config: ModelConfig, setConfig: (c: ModelConfig) => void) => (
-        <div className="flex-1 bg-gray-800/50 border border-gray-700/60 rounded-xl p-4 flex flex-col gap-4">
-            <div className="flex items-center gap-2 mb-1">
-                <Settings2 className="w-4 h-4 text-indigo-400" />
-                <h3 className="text-sm font-bold text-gray-200">{title}</h3>
-            </div>
+    // --- Componente blindado contra errores ---
+    const renderConfig = (title: string, config: ModelConfig | undefined, setConfig: (c: ModelConfig) => void) => {
+        // Aseguramos valores por defecto si config es undefined
+        const safeConfig = config || {
+            provider: "openai",
+            model: "gpt-4o",
+            systemPrompt: "",
+            temperature: 0.7,
+            maxTokens: 500
+        };
 
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Provider</label>
-                    <select
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
-                        value={config.provider}
-                        onChange={e => {
-                            const p = e.target.value as any;
-                            let defModel = "gpt-4o";
-                            if (p === "anthropic") defModel = "claude-3-5-sonnet-latest";
-                            if (p === "gemini") defModel = "gemini-1.5-pro";
-                            setConfig({ ...config, provider: p, model: defModel });
-                        }}
-                    >
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="gemini">Google Gemini</option>
-                    </select>
+        return (
+            <div className="flex-1 bg-gray-800/50 border border-gray-700/60 rounded-xl p-4 flex flex-col gap-4">
+                <div className="flex items-center gap-2 mb-1">
+                    <Settings2 className="w-4 h-4 text-indigo-400" />
+                    <h3 className="text-sm font-bold text-gray-200">{title}</h3>
                 </div>
-                <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Model</label>
-                    <select
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
-                        value={config.model}
-                        onChange={e => setConfig({ ...config, model: e.target.value })}
-                    >
-                        {config.provider === "openai" ? (
-                            <>
-                                <option value="gpt-4o">gpt-4o</option>
-                                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                            </>
-                        ) : config.provider === "anthropic" ? (
-                            <>
-                                <option value="claude-3-5-sonnet-latest">claude-3-5-sonnet-latest</option>
-                                <option value="claude-3-haiku-20240307">claude-3-haiku</option>
-                            </>
-                        ) : (
-                            <>
-                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                            </>
-                        )}
-                    </select>
-                </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Temp ({config.temperature})</label>
-                    <input
-                        type="range" min="0" max="2" step="0.1"
-                        className="w-full accent-indigo-500"
-                        value={config.temperature}
-                        onChange={e => setConfig({ ...config, temperature: parseFloat(e.target.value) })}
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Provider</label>
+                        <select
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                            value={safeConfig.provider}
+                            onChange={e => {
+                                const p = e.target.value as any;
+                                let defModel = "gpt-4o";
+                                if (p === "anthropic") defModel = "claude-3-5-sonnet-latest";
+                                if (p === "gemini") defModel = "gemini-1.5-pro";
+                                setConfig({ ...safeConfig, provider: p, model: defModel });
+                            }}
+                        >
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="gemini">Google Gemini</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Model</label>
+                        <select
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                            value={safeConfig.model}
+                            onChange={e => setConfig({ ...safeConfig, model: e.target.value })}
+                        >
+                            {safeConfig.provider === "openai" ? (
+                                <>
+                                    <option value="gpt-4o">gpt-4o</option>
+                                    <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                </>
+                            ) : safeConfig.provider === "anthropic" ? (
+                                <>
+                                    <option value="claude-3-5-sonnet-latest">claude-3-5-sonnet-latest</option>
+                                    <option value="claude-3-haiku-20240307">claude-3-haiku</option>
+                                </>
+                            ) : (
+                                <>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Temp ({safeConfig.temperature})</label>
+                        <input
+                            type="range" min="0" max="2" step="0.1"
+                            className="w-full accent-indigo-500"
+                            value={safeConfig.temperature}
+                            onChange={e => setConfig({ ...safeConfig, temperature: parseFloat(e.target.value) })}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Max Tokens</label>
+                        <input
+                            type="number"
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                            value={safeConfig.maxTokens}
+                            onChange={e => setConfig({ ...safeConfig, maxTokens: parseInt(e.target.value) || 500 })}
+                        />
+                    </div>
+                </div>
+
+                <div className="flex-1 flex flex-col">
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">System Prompt</label>
+                    <textarea
+                        className="w-full flex-1 min-h-[120px] bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed resize-y"
+                        value={safeConfig.systemPrompt}
+                        onChange={e => setConfig({ ...safeConfig, systemPrompt: e.target.value })}
                     />
                 </div>
-                <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Max Tokens</label>
-                    <input
-                        type="number"
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
-                        value={config.maxTokens}
-                        onChange={e => setConfig({ ...config, maxTokens: parseInt(e.target.value) || 500 })}
-                    />
-                </div>
             </div>
-
-            <div className="flex-1 flex flex-col">
-                <label className="block text-xs font-semibold text-gray-500 mb-1">System Prompt</label>
-                <textarea
-                    className="w-full flex-1 min-h-[120px] bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed resize-y"
-                    value={config.systemPrompt}
-                    onChange={e => setConfig({ ...config, systemPrompt: e.target.value })}
-                />
-            </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div className="flex flex-col space-y-4">

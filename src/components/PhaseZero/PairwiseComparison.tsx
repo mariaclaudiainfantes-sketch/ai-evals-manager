@@ -64,7 +64,7 @@ export function PairwiseComparison({ results }: Props) {
 
             if (error) {
                 // En caso de que la tabla se llame Traces mayuscula, intentamos con T mayuscula
-                const fallback = await supabase.from("Traces").insert([payload]);
+                const fallback = await supabase.from("traces").insert([payload]);
                 if (fallback.error) throw fallback.error;
             }
 
